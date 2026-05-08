@@ -2,12 +2,12 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>SENDER // TRANSMISSÃO ESTÁVEL</title>
+    <title>SENDER // TRANSMISSÃO IMORTAL</title>
     <style>
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #0d1117; color: #c9d1d9; font-family: monospace; margin: 0; }
         #videoPreview { width: 90%; max-width: 400px; aspect-ratio: 16/9; background-color: #000; border: 1px solid #30363d; border-radius: 4px; margin-bottom: 20px; object-fit: contain; }
         #gravarBtn { width: 140px; height: 140px; border-radius: 50%; border: 2px solid #30363d; background-color: #21262d; color: #c9d1d9; font-size: 14px; font-weight: bold; cursor: pointer; }
-        #gravarBtn.gravando { background-color: #da3633; color: white; border-color: #f85149; box-shadow: 0 0 20px rgba(218,54,51,0.4); }
+        #gravarBtn.gravando { background-color: #da3633; color: white; border-color: #f85149; box-shadow: 0 0 20px rgba(218, 54, 51, 0.4); }
         #status { margin-top: 20px; font-size: 12px; color: #8b949e; }
     </style>
 </head>
@@ -42,21 +42,19 @@
                     document.getElementById('status').innerText = `SESSÃO ATIVA: ${roomId}`;
                     
                     onSnapshot(roomRef, async (s) => {
-                        const data = s.data();
-                        // Auto-reinstanciamento se apagado ou comando de recuperação recebido [cite: 832, 849]
-                        if (isTransmitting && (!s.exists() || data?.comando === 'recover')) {
-                            console.log("Comando de Recuperação/Reset recebido. Reiniciando...");
-                            await updateDoc(roomRef, { comando: null });
-                            setTimeout(gerarOferta, 500);
+                        // LÓGICA IMORTAL: Se o registro for apagado mas a aba estiver aberta, RECRIA TUDO [cite: 105, 110]
+                        if (isTransmitting && !s.exists()) {
+                            console.log("Detectado que a sessão foi apagada. Recriando sinal...");
+                            setTimeout(gerarOferta, 1000);
                             return;
                         }
-                        if (data?.comando === 'flip') {
+                        const data = s.data(); if (!data) return;
+                        if (data.comando === 'flip') {
                             await updateDoc(roomRef, { comando: null, offer: deleteField(), answer: deleteField() });
                             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-                            setTimeout(iniciarTransmissao, 400); // [cite: 819, 836]
-                            return;
+                            setTimeout(iniciarTransmissao, 400); return;
                         }
-                        if (data?.answer && pc && !pc.currentRemoteDescription) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                        if (data.answer && pc && !pc.currentRemoteDescription) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
                     });
 
                     onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
@@ -64,7 +62,7 @@
                     });
                 }
                 gerarOferta();
-            } catch (e) { document.getElementById('status').innerText = "ERRO DE PERMISSÃO"; }
+            } catch (e) { document.getElementById('status').innerText = "ERRO: PERMITA A CAMERA"; }
         }
 
         async function gerarOferta() {
@@ -76,7 +74,6 @@
             await setDoc(doc(db, "sessoes", roomId), { ativo: true, nome: "CAMERA_01", lastSeen: Date.now(), offer: { type: offer.type, sdp: offer.sdp } }, { merge: true });
         }
 
-        // Heartbeat para manter a conexão "quente" e visível ao buscador [cite: 799, 811, 858]
         setInterval(() => { if(roomId && isTransmitting) updateDoc(doc(db, "sessoes", roomId), { lastSeen: Date.now() }); }, 5000);
         document.getElementById('gravarBtn').addEventListener('click', iniciarTransmissao);
         window.addEventListener('beforeunload', () => { isTransmitting = false; if(roomId) deleteDoc(doc(db, "sessoes", roomId)); });
