@@ -5,7 +5,7 @@
     <title>SENDER // TRANSMISSÃO</title>
     <style>
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #0d1117; color: #c9d1d9; font-family: sans-serif; margin: 0; }
-        #videoPreview { width: 90%; max-width: 400px; aspect-ratio: 16/9; background-color: #161b22; border: 1px solid #30363d; border-radius: 4px; margin-bottom: 20px; object-fit: contain;}
+        #videoPreview { width: 90%; max-width: 400px; aspect-ratio: 16/9; background-color: #161b22; border: 1px solid #30363d; border-radius: 4px; margin-bottom: 20px; object-fit: contain; background: #000;}
         #gravarBtn { width: 140px; height: 140px; border-radius: 50%; border: 2px solid #30363d; background-color: #21262d; color: #c9d1d9; font-size: 14px; font-weight: bold; cursor: pointer; }
         #gravarBtn.gravando { background-color: #da3633; color: white; border-color: #f85149; }
         #status { margin-top: 20px; font-size: 12px; color: #8b949e; font-family: monospace; }
@@ -33,22 +33,16 @@
 
         const configuration = { iceServers: [ { urls: "stun:stun.l.google.com:19302" }, { urls: "turn:144.22.225.58:3478?transport=udp", username: "filho", credential: "monitor2026" }, { urls: "turn:144.22.225.58:3478?transport=tcp", username: "filho", credential: "monitor2026" } ] };
 
-        let peerConnection, localStream, roomId;
+        let pc, localStream, roomId;
         let currentFacingMode = "environment";
 
         async function iniciarTransmissao() {
             try {
-                if (localStream) {
-                    localStream.getTracks().forEach(t => t.stop());
-                }
-                if (peerConnection) {
-                    peerConnection.close();
-                    peerConnection = null;
-                }
-                
+                if (localStream) localStream.getTracks().forEach(t => t.stop());
+                if (pc) pc.close();
+
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }, 
-                    audio: true 
+                    video: { facingMode: currentFacingMode }, audio: true 
                 });
                 document.getElementById('videoPreview').srcObject = localStream;
                 document.getElementById('gravarBtn').classList.add('gravando');
@@ -63,47 +57,38 @@
                         const data = s.data();
                         if (!data) return;
 
-                        // Comando de Inversão Remota
                         if (data.comando === 'flip') {
-                            console.log("Comando Flip recebido...");
                             await updateDoc(roomRef, { comando: null, offer: deleteField(), answer: deleteField() });
                             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-                            setTimeout(iniciarTransmissao, 300); // Pequeno delay para o hardware respirar
+                            setTimeout(iniciarTransmissao, 300);
                             return;
                         }
 
-                        // Lógica de Reconexão (F5 no Painel)
-                        if (localStream && !data.offer && !data.answer) {
-                            reiniciarPeer();
-                        } else if (data.answer && !peerConnection?.currentRemoteDescription) {
-                            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                        if (localStream && !data.offer && !data.answer) reiniciarConexao();
+                        else if (data.answer && pc && !pc.currentRemoteDescription) {
+                            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
                         }
                     });
 
                     onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
                         snap.docChanges().forEach(async c => {
-                            if (c.type === 'added' && peerConnection) {
-                                await peerConnection.addIceCandidate(new RTCIceCandidate(c.doc.data()));
-                            }
+                            if (c.type === 'added' && pc) await pc.addIceCandidate(new RTCIceCandidate(c.doc.data()));
                         });
                     });
                 }
-                reiniciarPeer();
-            } catch (e) { document.getElementById('status').innerText = "ERRO: PERMISSÃO NEGADA"; }
+                reiniciarConexao();
+            } catch (e) { alert("ERRO DE PERMISSÃO"); }
         }
 
-        async function reiniciarPeer() {
-            if (peerConnection) peerConnection.close();
-            peerConnection = new RTCPeerConnection(configuration);
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+        async function reiniciarConexao() {
+            if (pc) pc.close();
+            pc = new RTCPeerConnection(configuration);
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            pc.onicecandidate = e => e.candidate && setDoc(doc(collection(db, "sessoes", roomId, 'callerCandidates')), e.candidate.toJSON());
             
-            peerConnection.onicecandidate = e => {
-                if (e.candidate) setDoc(doc(collection(db, "sessoes", roomId, 'callerCandidates')), e.candidate.toJSON());
-            };
-            
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-            await setDoc(doc(db, "sessoes", roomId), { ativo: true, nome: "CAMERA_01", offer: { type: offer.type, sdp: offer.sdp } }, { merge: true });
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await setDoc(doc(db, "sessoes", roomId), { ativo: true, offer: { type: offer.type, sdp: offer.sdp } }, { merge: true });
         }
 
         document.getElementById('gravarBtn').addEventListener('click', iniciarTransmissao);
