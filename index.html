@@ -6,7 +6,7 @@
     <style>
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #0d1117; color: #c9d1d9; font-family: sans-serif; margin: 0; }
         #videoPreview { width: 90%; max-width: 400px; aspect-ratio: 16/9; background-color: #161b22; border: 1px solid #30363d; border-radius: 4px; margin-bottom: 20px; object-fit: cover;}
-        #gravarBtn { width: 140px; height: 140px; border-radius: 50%; border: 2px solid #30363d; background-color: #21262d; color: #c9d1d9; font-size: 14px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        #gravarBtn { width: 140px; height: 140px; border-radius: 50%; border: 2px solid #30363d; background-color: #21262d; color: #c9d1d9; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
         #gravarBtn.gravando { background-color: #da3633; color: white; border-color: #f85149; }
         #status { margin-top: 20px; font-size: 12px; color: #8b949e; font-family: monospace; }
     </style>
@@ -31,65 +31,58 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        const configuration = { 
-            iceServers: [ 
-                { urls: "stun:stun.l.google.com:19302" },
-                { urls: "turn:144.22.225.58:3478?transport=udp", username: "filho", credential: "monitor2026" },
-                { urls: "turn:144.22.225.58:3478?transport=tcp", username: "filho", credential: "monitor2026" }
-            ] 
-        };
+        const configuration = { iceServers: [ { urls: "stun:stun.l.google.com:19302" }, { urls: "turn:144.22.225.58:3478?transport=udp", username: "filho", credential: "monitor2026" }, { urls: "turn:144.22.225.58:3478?transport=tcp", username: "filho", credential: "monitor2026" } ] };
 
         let peerConnection, localStream, roomId;
+        let currentFacingMode = "environment";
         const btn = document.getElementById('gravarBtn');
 
-        btn.addEventListener('click', async () => {
-            if (localStream) return;
+        async function iniciarTransmissao() {
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
+                if (localStream) localStream.getTracks().forEach(t => t.stop());
+                localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode }, audio: true });
                 document.getElementById('videoPreview').srcObject = localStream;
                 btn.classList.add('gravando');
                 btn.innerHTML = 'ONLINE';
                 
-                const roomRef = doc(collection(db, "sessoes"));
-                roomId = roomRef.id;
-                
-                iniciarNovaConexao();
+                if (!roomId) {
+                    const roomRef = doc(collection(db, "sessoes"));
+                    roomId = roomRef.id;
+                    document.getElementById('status').innerText = `SESSÃO ATIVA // ID: ${roomId}`;
+                    
+                    onSnapshot(roomRef, async (s) => {
+                        const data = s.data();
+                        if (data?.comando === 'flip') {
+                            await updateDoc(roomRef, { comando: null });
+                            currentFacingMode = currentFacingMode === "environment" ? "user" : "environment";
+                            iniciarTransmissao();
+                        }
+                        if (localStream && !data?.offer && !data?.answer) reiniciarPeer();
+                        else if (data?.answer && !peerConnection.currentRemoteDescription) {
+                            peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                        }
+                    });
 
-                // Vigia se o painel resetou a oferta/answer (F5 no painel)
-                onSnapshot(roomRef, (s) => {
-                    if (localStream && !s.data()?.offer && !s.data()?.answer) {
-                        console.log("F5 Detectado no Painel. Reiniciando handshake...");
-                        iniciarNovaConexao();
-                    } else if (s.data()?.answer && !peerConnection.currentRemoteDescription) {
-                        peerConnection.setRemoteDescription(new RTCSessionDescription(s.data().answer));
-                    }
-                });
-
-                onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
-                    snap.docChanges().forEach(async c => c.type === 'added' && await peerConnection.addIceCandidate(new RTCIceCandidate(c.doc.data())));
-                });
-
-            } catch (e) { alert("ERRO: ACESSE VIA HTTPS"); }
-        });
-
-        async function iniciarNovaConexao() {
-            if (peerConnection) peerConnection.close();
-            
-            peerConnection = new RTCPeerConnection(configuration);
-            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-            peerConnection.onicecandidate = e => e.candidate && setDoc(doc(collection(db, "sessoes", roomId, 'callerCandidates')), e.candidate.toJSON());
-
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-
-            await setDoc(doc(db, "sessoes", roomId), { 
-                ativo: true, 
-                nome: "CAMERA_01", 
-                offer: { type: offer.type, sdp: offer.sdp } 
-            }, { merge: true });
+                    onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
+                        snap.docChanges().forEach(async c => c.type === 'added' && await peerConnection.addIceCandidate(new RTCIceCandidate(c.doc.data())));
+                    });
+                }
+                reiniciarPeer();
+            } catch (e) { alert("ERRO DE PERMISSÃO"); }
         }
 
+        async function reiniciarPeer() {
+            if (peerConnection) peerConnection.close();
+            peerConnection = new RTCPeerConnection(configuration);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            peerConnection.onicecandidate = e => e.candidate && setDoc(doc(collection(db, "sessoes", roomId, 'callerCandidates')), e.candidate.toJSON());
+            
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            await setDoc(doc(db, "sessoes", roomId), { ativo: true, nome: "CAMERA_01", offer: { type: offer.type, sdp: offer.sdp } }, { merge: true });
+        }
+
+        btn.addEventListener('click', iniciarTransmissao);
         window.addEventListener('beforeunload', () => roomId && deleteDoc(doc(db, "sessoes", roomId)));
     </script>
 </body>
