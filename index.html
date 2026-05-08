@@ -40,10 +40,16 @@
             try {
                 if (localStream) {
                     localStream.getTracks().forEach(t => t.stop());
-                    if (peerConnection) peerConnection.close();
+                }
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
                 }
                 
-                localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode }, audio: true });
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }, 
+                    audio: true 
+                });
                 document.getElementById('videoPreview').srcObject = localStream;
                 document.getElementById('gravarBtn').classList.add('gravando');
                 document.getElementById('gravarBtn').innerHTML = 'ONLINE';
@@ -55,30 +61,45 @@
                     
                     onSnapshot(roomRef, async (s) => {
                         const data = s.data();
-                        if (data?.comando === 'flip') {
+                        if (!data) return;
+
+                        // Comando de Inversão Remota
+                        if (data.comando === 'flip') {
+                            console.log("Comando Flip recebido...");
                             await updateDoc(roomRef, { comando: null, offer: deleteField(), answer: deleteField() });
                             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-                            iniciarTransmissao(); // Reinicialização forçada total
+                            setTimeout(iniciarTransmissao, 300); // Pequeno delay para o hardware respirar
+                            return;
                         }
-                        if (localStream && !data?.offer && !data?.answer) reiniciarPeer();
-                        else if (data?.answer && !peerConnection.currentRemoteDescription) {
+
+                        // Lógica de Reconexão (F5 no Painel)
+                        if (localStream && !data.offer && !data.answer) {
+                            reiniciarPeer();
+                        } else if (data.answer && !peerConnection?.currentRemoteDescription) {
                             await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
                         }
                     });
 
                     onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
-                        snap.docChanges().forEach(async c => c.type === 'added' && await peerConnection.addIceCandidate(new RTCIceCandidate(c.doc.data())));
+                        snap.docChanges().forEach(async c => {
+                            if (c.type === 'added' && peerConnection) {
+                                await peerConnection.addIceCandidate(new RTCIceCandidate(c.doc.data()));
+                            }
+                        });
                     });
                 }
                 reiniciarPeer();
-            } catch (e) { alert("ERRO DE PERMISSÃO"); }
+            } catch (e) { document.getElementById('status').innerText = "ERRO: PERMISSÃO NEGADA"; }
         }
 
         async function reiniciarPeer() {
             if (peerConnection) peerConnection.close();
             peerConnection = new RTCPeerConnection(configuration);
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-            peerConnection.onicecandidate = e => e.candidate && setDoc(doc(collection(db, "sessoes", roomId, 'callerCandidates')), e.candidate.toJSON());
+            
+            peerConnection.onicecandidate = e => {
+                if (e.candidate) setDoc(doc(collection(db, "sessoes", roomId, 'callerCandidates')), e.candidate.toJSON());
+            };
             
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
