@@ -2,12 +2,12 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>SENDER // TRANSMISSÃO ESTÁVEL</title>
+    <title>SENDER // TRANSMISSÃO</title>
     <style>
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #0d1117; color: #c9d1d9; font-family: monospace; margin: 0; }
         #videoPreview { width: 90%; max-width: 400px; aspect-ratio: 16/9; background-color: #000; border: 1px solid #30363d; border-radius: 4px; margin-bottom: 20px; object-fit: contain; }
         #gravarBtn { width: 140px; height: 140px; border-radius: 50%; border: 2px solid #30363d; background-color: #21262d; color: #c9d1d9; font-size: 14px; font-weight: bold; cursor: pointer; }
-        #gravarBtn.gravando { background-color: #da3633; color: white; border-color: #f85149; }
+        #gravarBtn.gravando { background-color: #da3633; color: white; border-color: #f85149; box-shadow: 0 0 20px rgba(218,54,51,0.4); }
         #status { margin-top: 20px; font-size: 12px; color: #8b949e; }
     </style>
 </head>
@@ -20,19 +20,10 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc, deleteField } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-        const firebaseConfig = {
-            apiKey: "AIzaSyCK_WxpjzW3wblhIjCGBJZXNlQ4YKM5IxQ",
-            authDomain: "explana-ae7bb.firebaseapp.com",
-            projectId: "explana-ae7bb",
-            storageBucket: "explana-ae7bb.firebasestorage.app",
-            messagingSenderId: "1036958420186",
-            appId: "1:1036958420186:web:71f2c6658d0407d9a629e3"
-        };
+        const firebaseConfig = { apiKey: "AIzaSyCK_WxpjzW3wblhIjCGBJZXNlQ4YKM5IxQ", authDomain: "explana-ae7bb.firebaseapp.com", projectId: "explana-ae7bb", storageBucket: "explana-ae7bb.firebasestorage.app", messagingSenderId: "1036958420186", appId: "1:1036958420186:web:71f2c6658d0407d9a629e3" };
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
-
-        // Configuração com seu IP da Oracle [cite: 220, 355]
-        const configuration = { iceServers: [ { urls: "stun:stun.l.google.com:19302" }, { urls: "turn:144.22.225.58:3478?transport=udp", username: "filho", credential: "monitor2026" }, { urls: "turn:144.22.225.58:3478?transport=tcp", username: "filho", credential: "monitor2026" } ] };
+        const config = { iceServers: [ { urls: "stun:stun.l.google.com:19302" }, { urls: "turn:144.22.225.58:3478?transport=udp", username: "filho", credential: "monitor2026" }, { urls: "turn:144.22.225.58:3478?transport=tcp", username: "filho", credential: "monitor2026" } ] };
 
         let pc, localStream, roomId;
         let currentFacingMode = "environment";
@@ -40,67 +31,42 @@
         async function iniciarTransmissao() {
             try {
                 if (localStream) localStream.getTracks().forEach(t => t.stop());
-                
-                localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: currentFacingMode }, 
-                    audio: true 
-                });
-                
+                localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode }, audio: true });
                 document.getElementById('videoPreview').srcObject = localStream;
                 document.getElementById('gravarBtn').classList.add('gravando');
                 document.getElementById('gravarBtn').innerHTML = 'ONLINE';
 
                 if (!roomId) {
-                    const roomRef = doc(collection(db, "sessoes"));
-                    roomId = roomRef.id;
-                    document.getElementById('status').innerText = `SESSÃO ATIVA // ID: ${roomId}`;
-                    
+                    const roomRef = doc(collection(db, "sessoes")); roomId = roomRef.id;
+                    document.getElementById('status').innerText = `SESSÃO ATIVA: ${roomId}`;
                     onSnapshot(roomRef, async (s) => {
-                        const data = s.data();
-                        if (!data) return;
-
+                        const data = s.data(); if (!data) return;
                         if (data.comando === 'flip') {
                             await updateDoc(roomRef, { comando: null, offer: deleteField(), answer: deleteField() });
                             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-                            setTimeout(iniciarTransmissao, 400); // Delay para estabilizar hardware [cite: 11, 650]
-                            return;
+                            setTimeout(iniciarTransmissao, 400); return;
                         }
-
-                        if (data.answer && pc && !pc.currentRemoteDescription) {
-                            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-                        }
+                        if (data.answer && pc && !pc.currentRemoteDescription) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
                     });
-
                     onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
-                        snap.docChanges().forEach(async c => {
-                            if (c.type === 'added' && pc) await pc.addIceCandidate(new RTCIceCandidate(c.doc.data()));
-                        });
+                        snap.docChanges().forEach(async c => { if (c.type === 'added' && pc) await pc.addIceCandidate(new RTCIceCandidate(c.doc.data())); });
                     });
                 }
-                novaConexao();
-            } catch (e) { document.getElementById('status').innerText = "ACESSO NEGADO"; }
+                gerarOferta();
+            } catch (e) { document.getElementById('status').innerText = "ERRO: PERMITA A CAMERA"; }
         }
 
-        async function novaConexao() {
+        async function gerarOferta() {
             if (pc) pc.close();
-            pc = new RTCPeerConnection(configuration);
+            pc = new RTCPeerConnection(config);
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-            
             pc.onicecandidate = e => e.candidate && setDoc(doc(collection(db, "sessoes", roomId, 'callerCandidates')), e.candidate.toJSON());
-            
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            await setDoc(doc(db, "sessoes", roomId), { 
-                ativo: true, 
-                nome: "CAMERA_01", 
-                offer: { type: offer.type, sdp: offer.sdp },
-                lastSeen: Date.now() 
-            }, { merge: true });
+            const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+            await setDoc(doc(db, "sessoes", roomId), { ativo: true, nome: "CAMERA_01", lastSeen: Date.now(), offer: { type: offer.type, sdp: offer.sdp } }, { merge: true });
         }
 
-        // Heartbeat para o buscador encontrar a sessão 
+        // Heartbeat para o buscador manual encontrar o sinal [cite: 75, 86]
         setInterval(() => { if(roomId) updateDoc(doc(db, "sessoes", roomId), { lastSeen: Date.now() }); }, 5000);
-
         document.getElementById('gravarBtn').addEventListener('click', iniciarTransmissao);
         window.addEventListener('beforeunload', () => roomId && deleteDoc(doc(db, "sessoes", roomId)));
     </script>
