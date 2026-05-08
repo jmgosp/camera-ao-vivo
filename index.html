@@ -42,9 +42,8 @@
                     document.getElementById('status').innerText = `SESSÃO ATIVA: ${roomId}`;
                     
                     onSnapshot(roomRef, async (s) => {
-                        // AUTO-REINSTANCIAMENTO: Se apagado ou se o painel resetar (answer sumir), recria a oferta [cite: 832, 912]
+                        // AUTO-REINSTANCIAMENTO: Se deletado ou se o painel resetar (answer sumir), recria a oferta
                         if (isTransmitting && (!s.exists() || (s.data()?.offer && !s.data()?.answer && pc?.signalingState === 'stable'))) {
-                            console.log("Reiniciando handshake...");
                             setTimeout(gerarOferta, 1000);
                             return;
                         }
