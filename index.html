@@ -5,8 +5,8 @@
     <title>SENDER // TRANSMISSÃO</title>
     <style>
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #0d1117; color: #c9d1d9; font-family: sans-serif; margin: 0; }
-        #videoPreview { width: 90%; max-width: 400px; aspect-ratio: 16/9; background-color: #161b22; border: 1px solid #30363d; border-radius: 4px; margin-bottom: 20px; object-fit: cover;}
-        #gravarBtn { width: 140px; height: 140px; border-radius: 50%; border: 2px solid #30363d; background-color: #21262d; color: #c9d1d9; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        #videoPreview { width: 90%; max-width: 400px; aspect-ratio: 16/9; background-color: #161b22; border: 1px solid #30363d; border-radius: 4px; margin-bottom: 20px; object-fit: contain;}
+        #gravarBtn { width: 140px; height: 140px; border-radius: 50%; border: 2px solid #30363d; background-color: #21262d; color: #c9d1d9; font-size: 14px; font-weight: bold; cursor: pointer; }
         #gravarBtn.gravando { background-color: #da3633; color: white; border-color: #f85149; }
         #status { margin-top: 20px; font-size: 12px; color: #8b949e; font-family: monospace; }
     </style>
@@ -18,7 +18,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc, deleteField } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCK_WxpjzW3wblhIjCGBJZXNlQ4YKM5IxQ",
@@ -35,15 +35,14 @@
 
         let peerConnection, localStream, roomId;
         let currentFacingMode = "environment";
-        const btn = document.getElementById('gravarBtn');
 
         async function iniciarTransmissao() {
             try {
                 if (localStream) localStream.getTracks().forEach(t => t.stop());
                 localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode }, audio: true });
                 document.getElementById('videoPreview').srcObject = localStream;
-                btn.classList.add('gravando');
-                btn.innerHTML = 'ONLINE';
+                document.getElementById('gravarBtn').classList.add('gravando');
+                document.getElementById('gravarBtn').innerHTML = 'ONLINE';
                 
                 if (!roomId) {
                     const roomRef = doc(collection(db, "sessoes"));
@@ -53,9 +52,9 @@
                     onSnapshot(roomRef, async (s) => {
                         const data = s.data();
                         if (data?.comando === 'flip') {
-                            await updateDoc(roomRef, { comando: null });
+                            await updateDoc(roomRef, { comando: null, offer: deleteField(), answer: deleteField() });
                             currentFacingMode = currentFacingMode === "environment" ? "user" : "environment";
-                            iniciarTransmissao();
+                            iniciarTransmissao(); // Reinicia tudo para não travar
                         }
                         if (localStream && !data?.offer && !data?.answer) reiniciarPeer();
                         else if (data?.answer && !peerConnection.currentRemoteDescription) {
@@ -82,7 +81,7 @@
             await setDoc(doc(db, "sessoes", roomId), { ativo: true, nome: "CAMERA_01", offer: { type: offer.type, sdp: offer.sdp } }, { merge: true });
         }
 
-        btn.addEventListener('click', iniciarTransmissao);
+        document.getElementById('gravarBtn').addEventListener('click', iniciarTransmissao);
         window.addEventListener('beforeunload', () => roomId && deleteDoc(doc(db, "sessoes", roomId)));
     </script>
 </body>
