@@ -18,7 +18,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc, deleteField } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
         const firebaseConfig = { apiKey: "AIzaSyCK_WxpjzW3wblhIjCGBJZXNlQ4YKM5IxQ", authDomain: "explana-ae7bb.firebaseapp.com", projectId: "explana-ae7bb", storageBucket: "explana-ae7bb.firebasestorage.app", messagingSenderId: "1036958420186", appId: "1:1036958420186:web:71f2c6658d0407d9a629e3" };
         const app = initializeApp(firebaseConfig);
@@ -27,6 +27,7 @@
 
         let pc, localStream, roomId, isTransmitting = false;
         let currentFacingMode = "environment";
+        let listenerPainel = null; // Para anular a escuta antiga e evitar conflitos
 
         async function iniciarTransmissao() {
             try {
@@ -47,54 +48,76 @@
                     document.getElementById('status').innerText = `ID: ${roomId}`;
                     
                     onSnapshot(roomRef, async (s) => {
+                        if (!s.exists()) return;
                         const data = s.data();
                         
-                        // LÓGICA IMORTAL: Se o painel resetar (offer/answer sumir), a babá recria o sinal na hora
-                        if (isTransmitting && (!s.exists() || (!data.offer && !data.answer))) {
-                            console.log("Reset detectado. Recriando sinal...");
+                        // Painel solicitou reinicialização brutal (F5 na página)
+                        if (isTransmitting && data.comando === 'reset') {
+                            console.log("Reinicialização profunda acionada...");
                             gerarOferta();
                             return;
                         }
 
-                        if (data?.comando === 'flip') {
-                            await updateDoc(roomRef, { comando: null, offer: deleteField(), answer: deleteField() });
+                        // Inversão da câmera
+                        if (data.comando === 'flip') {
                             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-                            setTimeout(iniciarTransmissao, 400); 
+                            if (localStream) localStream.getTracks().forEach(t => t.stop());
+                            localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode }, audio: true });
+                            document.getElementById('videoPreview').srcObject = localStream;
+                            gerarOferta(); 
                             return;
                         }
 
-                        if (data?.answer && pc && !pc.currentRemoteDescription) {
+                        // Sincronização Segura: Só pega IPs depois que aceitar a autorização
+                        if (data.answer && pc && pc.signalingState === "have-local-offer") {
                             await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-                        }
-                    });
-
-                    onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
-                        snap.docChanges().forEach(async c => { 
-                            if (c.type === 'added' && pc) {
-                                try { await pc.addIceCandidate(new RTCIceCandidate(c.doc.data())); } catch(e){}
+                            
+                            if (!listenerPainel) {
+                                listenerPainel = onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
+                                    snap.docChanges().forEach(async c => { 
+                                        if (c.type === 'added' && pc && pc.remoteDescription) {
+                                            try { await pc.addIceCandidate(new RTCIceCandidate(c.doc.data())); } catch(e){}
+                                        }
+                                    });
+                                });
                             }
-                        });
+                        }
                     });
                 }
                 gerarOferta();
-            } catch (e) { document.getElementById('status').innerText = "ERRO: ACESSE VIA HTTPS"; }
+            } catch (e) { document.getElementById('status').innerText = "ERRO: PERMISSÃO NEGADA"; }
         }
 
         async function gerarOferta() {
             if (pc) pc.close();
+            if (listenerPainel) { listenerPainel(); listenerPainel = null; } // Reseta a escuta
+
             pc = new RTCPeerConnection(config);
+            const roomRef = doc(db, "sessoes", roomId);
+
+            // CORREÇÃO MESTRA: Busca e tritura todo o lixo velho escondido no Firebase
+            const lixo1 = await getDocs(collection(roomRef, 'callerCandidates'));
+            lixo1.forEach(d => deleteDoc(d.ref));
+            const lixo2 = await getDocs(collection(roomRef, 'calleeCandidates'));
+            lixo2.forEach(d => deleteDoc(d.ref));
+
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
             
-            pc.onicecandidate = e => e.candidate && setDoc(doc(collection(db, "sessoes", roomId, 'callerCandidates')), e.candidate.toJSON());
+            pc.onicecandidate = e => {
+                if (e.candidate) setDoc(doc(collection(roomRef, 'callerCandidates')), e.candidate.toJSON());
+            };
             
             const offer = await pc.createOffer(); 
             await pc.setLocalDescription(offer);
             
-            await setDoc(doc(db, "sessoes", roomId), { 
+            // Grava a oferta zerando os rastros da conexão anterior
+            await setDoc(roomRef, { 
                 ativo: true, 
                 nome: "CAMERA_01", 
                 lastSeen: Date.now(), 
-                offer: { type: offer.type, sdp: offer.sdp } 
+                offer: { type: offer.type, sdp: offer.sdp },
+                answer: null,
+                comando: null
             }, { merge: true });
         }
 
