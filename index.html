@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>SENDER // TRANSMISSÃO</title>
+    <title>SENDER // TRANSMISSÃO ESTÁVEL</title>
     <style>
         body { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #0d1117; color: #c9d1d9; font-family: monospace; margin: 0; }
         #videoPreview { width: 90%; max-width: 400px; aspect-ratio: 16/9; background-color: #000; border: 1px solid #30363d; border-radius: 4px; margin-bottom: 20px; object-fit: contain; }
@@ -25,7 +25,7 @@
         const db = getFirestore(app);
         const config = { iceServers: [ { urls: "stun:stun.l.google.com:19302" }, { urls: "turn:144.22.225.58:3478?transport=udp", username: "filho", credential: "monitor2026" }, { urls: "turn:144.22.225.58:3478?transport=tcp", username: "filho", credential: "monitor2026" } ] };
 
-        let pc, localStream, roomId;
+        let pc, localStream, roomId, isTransmitting = false;
         let currentFacingMode = "environment";
 
         async function iniciarTransmissao() {
@@ -35,25 +35,36 @@
                 document.getElementById('videoPreview').srcObject = localStream;
                 document.getElementById('gravarBtn').classList.add('gravando');
                 document.getElementById('gravarBtn').innerHTML = 'ONLINE';
+                isTransmitting = true;
 
                 if (!roomId) {
                     const roomRef = doc(collection(db, "sessoes")); roomId = roomRef.id;
                     document.getElementById('status').innerText = `SESSÃO ATIVA: ${roomId}`;
+                    
                     onSnapshot(roomRef, async (s) => {
-                        const data = s.data(); if (!data) return;
-                        if (data.comando === 'flip') {
+                        const data = s.data();
+                        // Auto-reinstanciamento se apagado ou comando de recuperação recebido [cite: 832, 849]
+                        if (isTransmitting && (!s.exists() || data?.comando === 'recover')) {
+                            console.log("Comando de Recuperação/Reset recebido. Reiniciando...");
+                            await updateDoc(roomRef, { comando: null });
+                            setTimeout(gerarOferta, 500);
+                            return;
+                        }
+                        if (data?.comando === 'flip') {
                             await updateDoc(roomRef, { comando: null, offer: deleteField(), answer: deleteField() });
                             currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
-                            setTimeout(iniciarTransmissao, 400); return;
+                            setTimeout(iniciarTransmissao, 400); // [cite: 819, 836]
+                            return;
                         }
-                        if (data.answer && pc && !pc.currentRemoteDescription) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                        if (data?.answer && pc && !pc.currentRemoteDescription) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
                     });
+
                     onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
                         snap.docChanges().forEach(async c => { if (c.type === 'added' && pc) await pc.addIceCandidate(new RTCIceCandidate(c.doc.data())); });
                     });
                 }
                 gerarOferta();
-            } catch (e) { document.getElementById('status').innerText = "ERRO: PERMITA A CAMERA"; }
+            } catch (e) { document.getElementById('status').innerText = "ERRO DE PERMISSÃO"; }
         }
 
         async function gerarOferta() {
@@ -65,10 +76,10 @@
             await setDoc(doc(db, "sessoes", roomId), { ativo: true, nome: "CAMERA_01", lastSeen: Date.now(), offer: { type: offer.type, sdp: offer.sdp } }, { merge: true });
         }
 
-        // Heartbeat para o buscador manual encontrar o sinal [cite: 75, 86]
-        setInterval(() => { if(roomId) updateDoc(doc(db, "sessoes", roomId), { lastSeen: Date.now() }); }, 5000);
+        // Heartbeat para manter a conexão "quente" e visível ao buscador [cite: 799, 811, 858]
+        setInterval(() => { if(roomId && isTransmitting) updateDoc(doc(db, "sessoes", roomId), { lastSeen: Date.now() }); }, 5000);
         document.getElementById('gravarBtn').addEventListener('click', iniciarTransmissao);
-        window.addEventListener('beforeunload', () => roomId && deleteDoc(doc(db, "sessoes", roomId)));
+        window.addEventListener('beforeunload', () => { isTransmitting = false; if(roomId) deleteDoc(doc(db, "sessoes", roomId)); });
     </script>
 </body>
 </html>
