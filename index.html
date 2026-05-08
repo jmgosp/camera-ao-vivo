@@ -2,34 +2,23 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>SISTEMA SENDER // CENTRO DE COMANDO</title>
+    <title>SENDER // TRANSMISSÃO</title>
     <style>
-        body { margin: 0; padding: 20px; background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, sans-serif; }
-        .header { display: flex; justify-content: space-between; border-bottom: 1px solid #30363d; padding-bottom: 15px; margin-bottom: 20px; }
-        #cctvGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; justify-items: center; max-width: 1400px; margin: 0 auto; }
-        .monitor-box { background-color: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; width: 100%; max-width: 500px; position: relative; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
-        .monitor-box:fullscreen { max-width: none; width: 100vw; height: 100vh; border-radius: 0; background-color: #000; }
-        .video-container { width: 100%; aspect-ratio: 16/9; background: #000; display: flex; align-items: center; justify-content: center; flex-grow: 1; }
-        video { width: 100%; height: 100%; object-fit: contain; }
-        .cam-info { background-color: #1a1f26; padding: 10px 15px; display: flex; justify-content: space-between; font-size: 11px; font-family: monospace; border-bottom: 1px solid #30363d; color: #8b949e; }
-        .controls { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 12px; background-color: #0d1117; }
-        button { background-color: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 8px; cursor: pointer; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
-        button:hover { background-color: #30363d; }
-        .btn-apagar { color: #f85149; grid-column: span 3; margin-top: 4px; border-color: rgba(248,81,73,0.2); }
-        .btn-exit-zoom { display: none; position: absolute; top: 20px; right: 20px; z-index: 9999; background: rgba(248,81,73,0.9); color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        .monitor-box:fullscreen .btn-exit-zoom { display: block; }
+        body { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background-color: #0d1117; color: #c9d1d9; font-family: sans-serif; margin: 0; }
+        #videoPreview { width: 90%; max-width: 400px; aspect-ratio: 16/9; background-color: #161b22; border: 1px solid #30363d; border-radius: 4px; margin-bottom: 20px; object-fit: contain;}
+        #gravarBtn { width: 140px; height: 140px; border-radius: 50%; border: 2px solid #30363d; background-color: #21262d; color: #c9d1d9; font-size: 14px; font-weight: bold; cursor: pointer; }
+        #gravarBtn.gravando { background-color: #da3633; color: white; border-color: #f85149; }
+        #status { margin-top: 20px; font-size: 12px; color: #8b949e; font-family: monospace; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>[ CONTROL_CENTER ]</h1>
-        <div id="globalStatus" style="font-family: monospace; font-size: 11px; color: #58a6ff;">STATUS: MONITORING_ACTIVE</div>
-    </div>
-    <div id="cctvGrid"></div>
+    <video id="videoPreview" autoplay muted playsinline></video>
+    <button id="gravarBtn">ATIVAR<br>SISTEMA</button>
+    <div id="status">STATUS: AGUARDANDO COMANDO</div>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getFirestore, collection, doc, onSnapshot, updateDoc, deleteDoc, setDoc, deleteField } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc, updateDoc, deleteField } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCK_WxpjzW3wblhIjCGBJZXNlQ4YKM5IxQ",
@@ -44,93 +33,81 @@
 
         const configuration = { iceServers: [ { urls: "stun:stun.l.google.com:19302" }, { urls: "turn:144.22.225.58:3478?transport=udp", username: "filho", credential: "monitor2026" }, { urls: "turn:144.22.225.58:3478?transport=tcp", username: "filho", credential: "monitor2026" } ] };
 
-        // Monitora as sessões no Firestore
-        onSnapshot(collection(db, "sessoes"), (snapshot) => {
-            snapshot.docChanges().forEach(change => {
-                const id = change.doc.id;
-                const data = change.doc.data();
-                if (change.type === 'added' || (change.type === 'modified' && data.offer && !document.getElementById(`monitor-${id}`))) {
-                    criarMonitor(id, data);
+        let peerConnection, localStream, roomId;
+        let currentFacingMode = "environment";
+
+        async function iniciarTransmissao() {
+            try {
+                if (localStream) {
+                    localStream.getTracks().forEach(t => t.stop());
                 }
-                if (change.type === 'modified') {
-                    const nomeEl = document.querySelector(`#monitor-${id} .cam-name`);
-                    if (nomeEl) nomeEl.innerText = data.nome || 'CAMERA';
+                if (peerConnection) {
+                    peerConnection.close();
+                    peerConnection = null;
                 }
-                if (change.type === 'removed') document.getElementById(`monitor-${id}`)?.remove();
-            });
-        });
+                
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: currentFacingMode, width: { ideal: 1280 }, height: { ideal: 720 } }, 
+                    audio: true 
+                });
+                document.getElementById('videoPreview').srcObject = localStream;
+                document.getElementById('gravarBtn').classList.add('gravando');
+                document.getElementById('gravarBtn').innerHTML = 'ONLINE';
+                
+                if (!roomId) {
+                    const roomRef = doc(collection(db, "sessoes"));
+                    roomId = roomRef.id;
+                    document.getElementById('status').innerText = `SESSÃO ATIVA // ID: ${roomId}`;
+                    
+                    onSnapshot(roomRef, async (s) => {
+                        const data = s.data();
+                        if (!data) return;
 
-        async function criarMonitor(id, sessao) {
-            if (!sessao.offer) return;
-            const box = document.createElement('div');
-            box.id = `monitor-${id}`;
-            box.className = 'monitor-box';
-            box.innerHTML = `
-                <button class="btn-exit-zoom" onclick="document.exitFullscreen()">SAIR DO ZOOM</button>
-                <div class="cam-info"><span class="cam-name">${sessao.nome || 'CAMERA'}</span><span id="st-${id}">SYNC...</span></div>
-                <div class="video-container"><video id="video-${id}" autoplay playsinline muted></video></div>
-                <div class="controls">
-                    <button id="btn-audio-${id}" onclick="alternarAudio('${id}')">ÁUDIO</button>
-                    <button onclick="alternarTelaCheia('${id}')">ZOOM</button>
-                    <button onclick="inverterCameraRemoto('${id}')">INVERTER</button>
-                    <button onclick="renomearCamera('${id}')">RENOMEAR</button>
-                    <button class="btn-apagar" onclick="apagarSessao('${id}')">DERRUBAR</button>
-                </div>
-            `;
-            document.getElementById('cctvGrid').appendChild(box);
+                        // Comando de Inversão Remota
+                        if (data.comando === 'flip') {
+                            console.log("Comando Flip recebido...");
+                            await updateDoc(roomRef, { comando: null, offer: deleteField(), answer: deleteField() });
+                            currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+                            setTimeout(iniciarTransmissao, 300); // Pequeno delay para o hardware respirar
+                            return;
+                        }
 
-            const pc = new RTCPeerConnection(configuration);
-            const stream = new MediaStream();
-            document.getElementById(`video-${id}`).srcObject = stream;
+                        // Lógica de Reconexão (F5 no Painel)
+                        if (localStream && !data.offer && !data.answer) {
+                            reiniciarPeer();
+                        } else if (data.answer && !peerConnection?.currentRemoteDescription) {
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                        }
+                    });
 
-            pc.ontrack = e => e.streams[0].getTracks().forEach(t => stream.addTrack(t));
-            pc.onicecandidate = e => e.candidate && setDoc(doc(collection(db, "sessoes", id, 'calleeCandidates')), e.candidate.toJSON());
-            pc.onconnectionstatechange = () => {
-                const statusEl = document.getElementById(`st-${id}`);
-                if (statusEl) statusEl.innerText = pc.connectionState.toUpperCase();
-            };
-
-            await pc.setRemoteDescription(new RTCSessionDescription(sessao.offer));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            await updateDoc(doc(db, "sessoes", id), { answer: { type: answer.type, sdp: answer.sdp } });
-
-            onSnapshot(collection(db, "sessoes", id, 'callerCandidates'), snap => {
-                snap.docChanges().forEach(async c => c.type === 'added' && await pc.addIceCandidate(new RTCIceCandidate(c.doc.data())));
-            });
-
-            // Vigia se a Babá limpou a oferta (sinal de reset/flip)
-            const unsub = onSnapshot(doc(db, "sessoes", id), (s) => {
-                if (!s.exists() || !s.data()?.offer) {
-                    unsub();
-                    box.remove(); // Remove o quadro para não ficar congelado
+                    onSnapshot(collection(roomRef, 'calleeCandidates'), snap => {
+                        snap.docChanges().forEach(async c => {
+                            if (c.type === 'added' && peerConnection) {
+                                await peerConnection.addIceCandidate(new RTCIceCandidate(c.doc.data()));
+                            }
+                        });
+                    });
                 }
-            });
+                reiniciarPeer();
+            } catch (e) { document.getElementById('status').innerText = "ERRO: PERMISSÃO NEGADA"; }
         }
 
-        window.alternarTelaCheia = (id) => {
-            const el = document.getElementById(`monitor-${id}`);
-            if (!document.fullscreenElement) el.requestFullscreen();
-            else document.exitFullscreen();
-        };
+        async function reiniciarPeer() {
+            if (peerConnection) peerConnection.close();
+            peerConnection = new RTCPeerConnection(configuration);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            
+            peerConnection.onicecandidate = e => {
+                if (e.candidate) setDoc(doc(collection(db, "sessoes", roomId, 'callerCandidates')), e.candidate.toJSON());
+            };
+            
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            await setDoc(doc(db, "sessoes", roomId), { ativo: true, nome: "CAMERA_01", offer: { type: offer.type, sdp: offer.sdp } }, { merge: true });
+        }
 
-        window.inverterCameraRemoto = async (id) => {
-            // Avisa o celular para resetar tudo
-            await updateDoc(doc(db, "sessoes", id), { comando: 'flip', offer: deleteField(), answer: deleteField() });
-        };
-
-        window.renomearCamera = async (id) => {
-            const novoNome = prompt("Novo nome:");
-            if (novoNome) await updateDoc(doc(db, "sessoes", id), { nome: novoNome });
-        };
-
-        window.alternarAudio = (id) => {
-            const v = document.getElementById(`video-${id}`);
-            v.muted = !v.muted;
-            document.getElementById(`btn-audio-${id}`).classList.toggle('active');
-        };
-
-        window.apagarSessao = id => deleteDoc(doc(db, "sessoes", id));
+        document.getElementById('gravarBtn').addEventListener('click', iniciarTransmissao);
+        window.addEventListener('beforeunload', () => roomId && deleteDoc(doc(db, "sessoes", roomId)));
     </script>
 </body>
 </html>
