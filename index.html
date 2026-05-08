@@ -38,7 +38,11 @@
 
         async function iniciarTransmissao() {
             try {
-                if (localStream) localStream.getTracks().forEach(t => t.stop());
+                if (localStream) {
+                    localStream.getTracks().forEach(t => t.stop());
+                    if (peerConnection) peerConnection.close();
+                }
+                
                 localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode }, audio: true });
                 document.getElementById('videoPreview').srcObject = localStream;
                 document.getElementById('gravarBtn').classList.add('gravando');
@@ -53,12 +57,12 @@
                         const data = s.data();
                         if (data?.comando === 'flip') {
                             await updateDoc(roomRef, { comando: null, offer: deleteField(), answer: deleteField() });
-                            currentFacingMode = currentFacingMode === "environment" ? "user" : "environment";
-                            iniciarTransmissao(); // Reinicia tudo para não travar
+                            currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+                            iniciarTransmissao(); // Reinicialização forçada total
                         }
                         if (localStream && !data?.offer && !data?.answer) reiniciarPeer();
                         else if (data?.answer && !peerConnection.currentRemoteDescription) {
-                            peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
                         }
                     });
 
